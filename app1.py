@@ -84,42 +84,74 @@ st.markdown(
 # ----------------------------
 @st.cache_data(ttl=3600)
 def load_gold_vs_cetes():
-    df = yf.download("GC=F", period="1y", interval="1d", auto_adjust=False, progress=False)
+    try:
+        df = yf.download(
+            "GC=F",
+            period="1y",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
 
-    if df.empty:
+        if df is None or df.empty:
+            st.warning("Yahoo Finance no devolvió datos para GC=F.")
+            return None
+
+        df = df.reset_index()
+
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+
+        st.write("Columnas detectadas:", list(df.columns))
+
+        if "Date" not in df.columns:
+            st.warning("No se encontró la columna Date.")
+            return None
+
+        # A veces yfinance regresa Close, a veces Adj Close
+        price_col = None
+        for candidate in ["Close", "Adj Close"]:
+            if candidate in df.columns:
+                price_col = candidate
+                break
+
+        if price_col is None:
+            st.warning("No se encontró columna de precio (Close o Adj Close).")
+            return None
+
+        df = df[["Date", price_col]].copy()
+        df = df.rename(columns={price_col: "Close"})
+        df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+        df = df.dropna(subset=["Close"]).sort_values("Date").reset_index(drop=True)
+
+        if df.empty:
+            st.warning("La serie quedó vacía después de limpiar datos.")
+            return None
+
+        gold_start = float(df["Close"].iloc[0])
+        gold_end = float(df["Close"].iloc[-1])
+
+        df["Oro"] = (df["Close"] / gold_start) * 100
+
+        daily_rate = (1 + CETES_ANNUAL_RATE) ** (1 / 365) - 1
+        df["day_number"] = range(len(df))
+        df["CETES 28d"] = 100 * ((1 + daily_rate) ** df["day_number"])
+
+        gold_return = ((gold_end / gold_start) - 1) * 100
+        cetes_return = (df["CETES 28d"].iloc[-1] / 100 - 1) * 100
+
+        plot_df = df[["Date", "Oro", "CETES 28d"]].melt(
+            id_vars="Date",
+            var_name="Activo",
+            value_name="Índice base 100"
+        )
+
+        return plot_df, gold_return, cetes_return, gold_start, gold_end
+
+    except Exception as e:
+        st.error(f"Error cargando datos: {e}")
         return None
-
-    df = df.reset_index()
-
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
-
-    if "Date" not in df.columns or "Close" not in df.columns:
-        return None
-
-    df = df[["Date", "Close"]].copy()
-    df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
-    df = df.dropna(subset=["Close"]).sort_values("Date").reset_index(drop=True)
-
-    gold_start = float(df["Close"].iloc[0])
-    gold_end = float(df["Close"].iloc[-1])
-    df["Oro"] = (df["Close"] / gold_start) * 100
-
-    daily_rate = (1 + CETES_ANNUAL_RATE) ** (1 / 365) - 1
-    df["day_number"] = range(len(df))
-    df["CETES 28d"] = 100 * ((1 + daily_rate) ** df["day_number"])
-
-    gold_return = ((gold_end / gold_start) - 1) * 100
-    cetes_return = (df["CETES 28d"].iloc[-1] / 100 - 1) * 100
-
-    plot_df = df[["Date", "Oro", "CETES 28d"]].melt(
-        id_vars="Date",
-        var_name="Activo",
-        value_name="Índice base 100"
-    )
-
-    return plot_df, gold_return, cetes_return, gold_start, gold_end
-
 
 def build_sample_deals():
     df = pd.DataFrame(
@@ -269,14 +301,8 @@ if result is not None:
     )
 
     st.plotly_chart(fig, use_container_width=True)
-
-    st.caption(
-        "Comparación visual con base 100 al inicio del periodo. "
-        "La curva de CETES usa como benchmark una tasa anual de 6.60%."
-    )
 else:
     st.error("No se pudo cargar la comparación Oro vs CETES.")
-
 # ----------------------------
 # Histórico ilustrativo
 # ----------------------------
@@ -387,7 +413,21 @@ with col2:
 # ----------------------------
 # Criterios de inversión
 # ----------------------------
-st.markdown("<div class='section-title'>Criterios de inversión</div>", unsafe_allow_html=True)
+st.markdown(
+    """
+    <style>
+        .criteria-card {
+            padding: 1rem;
+            border-radius: 14px;
+            background-color: rgba(200, 200, 200, 0.1);
+            border: 1px solid rgba(200, 200, 200, 0.3);
+            color: inherit;
+            height: 100%;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 c1, c2, c3 = st.columns(3)
 
