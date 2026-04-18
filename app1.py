@@ -86,7 +86,7 @@ st.markdown(
 def load_gold_vs_cetes():
     try:
         df = yf.download(
-            "GC=F",
+            "GLD",
             period="1y",
             interval="1d",
             auto_adjust=True,
